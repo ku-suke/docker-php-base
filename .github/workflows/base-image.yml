@@ -1,0 +1,82 @@
+name: Build Base Docker Image
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # 毎週日曜日に実行
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  build-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Build and push AMD64 image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile.base
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+  
+  build-arm64:
+    runs-on: ubuntu-24.04-arm  # ARM64アーキテクチャ用
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Build and push ARM64 image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile.base
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest
+          platforms: linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+  
+  create-manifest:
+    needs: [build-amd64, build-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Create and push manifest
+        uses: docker/manifest-create@v2
+        with:
+          images: |
+            ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest
+            ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/docker-php-base:latest
+            ghcr.io/${{ github.repository_owner }}/docker-php-base:${{ github.sha }}

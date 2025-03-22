@@ -1,0 +1,52 @@
+FROM php:8.2-apache
+
+# Docswell用ベースイメージ
+
+# PHP拡張インストーラーを追加
+COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
+
+# 必要最低限のシステムパッケージだけをインストール
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+    git \
+    zip \
+    unzip \
+    poppler-utils \
+    poppler-data \
+    fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
+# PHP拡張を一度のコマンドでインストール
+RUN install-php-extensions \
+    bcmath \
+    exif \
+    gmp \
+    intl \
+    gd \
+    opcache \
+    pdo \
+    pdo_mysql \
+    mysqli \
+    zip \
+    imagick \
+    apcu \
+    excimer \
+    memcached
+
+# Apacheの設定
+RUN echo 'ServerTokens Prod' >> /etc/apache2/apache2.conf \
+    && a2enmod headers ssl \
+    && ln -s /etc/apache2/mods-available/rewrite.load /etc/apache2/mods-enabled/
+
+# Composerのインストール
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Composer環境変数
+ENV COMPOSER_ALLOW_SUPERUSER 1
+ENV COMPOSER_HOME /composer
+ENV PATH $PATH:/composer/vendor/bin
+
+# ビルド情報を記録（デバッグ用）
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+RUN echo "Built on $BUILDPLATFORM for $TARGETPLATFORM" > /build-info.txt
