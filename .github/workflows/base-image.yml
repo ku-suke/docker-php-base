@@ -60,7 +60,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
   
-  create-manifest:
+  merge-manifest:
     needs: [build-amd64, build-arm64]
     runs-on: ubuntu-latest
     steps:
@@ -71,12 +71,13 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.CR_PAT }}
       
-      - name: Create and push manifest
-        uses: docker/manifest-create@v2
-        with:
-          images: |
-            ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest
-            ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/docker-php-base:latest
-            ghcr.io/${{ github.repository_owner }}/docker-php-base:${{ github.sha }}
+      - name: Create and push manifest list
+        run: |
+          docker manifest create ghcr.io/${{ github.repository_owner }}/docker-php-base:latest \
+            --amend ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest \
+            --amend ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest
+          docker manifest create ghcr.io/${{ github.repository_owner }}/docker-php-base:${{ github.sha }} \
+            --amend ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest \
+            --amend ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest
+          docker manifest push ghcr.io/${{ github.repository_owner }}/docker-php-base:latest
+          docker manifest push ghcr.io/${{ github.repository_owner }}/docker-php-base:${{ github.sha }}
