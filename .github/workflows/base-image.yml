@@ -1,3 +1,11 @@
+name: Build Base Docker Image
+
+on:
+  schedule:
+    - cron: '20 0 * * 0'  # 毎週日曜日に実行
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
   build-amd64:
     runs-on: ubuntu-latest
     steps:
