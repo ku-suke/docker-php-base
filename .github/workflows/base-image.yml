@@ -2,7 +2,7 @@ name: Build Base Docker Image
 
 on:
   schedule:
-    - cron: '20 0 * * 0'  # 毎週日曜日に実行
+    - cron: '0 0 * * 0'  # 毎週日曜日に実行
   workflow_dispatch:  # 手動実行も可能
 
 jobs:
@@ -12,9 +12,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
       
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-      
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2
         with:
@@ -23,26 +20,15 @@ jobs:
           password: ${{ secrets.CR_PAT }}
       
       - name: Build and push AMD64 image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          file: ./Dockerfile.base
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest
-          platforms: linux/amd64
-          # 単一イメージを確実にプッシュ
-          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest,push=true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        run: |
+          docker build -f ./Dockerfile.base -t ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest .
+          docker push ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest
 
   build-arm64:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.04-arm  # ARM64アーキテクチャ用
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
       
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2
@@ -52,16 +38,9 @@ jobs:
           password: ${{ secrets.CR_PAT }}
       
       - name: Build and push ARM64 image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          file: ./Dockerfile.base
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest
-          platforms: linux/arm64
-          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest,push=true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        run: |
+          docker build -f ./Dockerfile.base -t ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest .
+          docker push ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest
 
   merge-manifest:
     needs: [build-amd64, build-arm64]
