@@ -1,4 +1,4 @@
-FROM php:8.2-apache
+FROM php:8.3-apache
 
 # Docswell用ベースイメージ
 
@@ -49,4 +49,5 @@ ENV PATH $PATH:/composer/vendor/bin
 # ビルド情報を記録（デバッグ用）
 ARG BUILDPLATFORM
 ARG TARGETPLATFORM
+
 RUN echo "Built on $BUILDPLATFORM for $TARGETPLATFORM" > /build-info.txt
