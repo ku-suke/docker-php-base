@@ -32,7 +32,8 @@ RUN install-php-extensions \
     apcu \
     excimer \
     memcached \
-    redis
+    redis \
+    ffi
 
 # Apacheの設定
 RUN echo 'ServerTokens Prod' >> /etc/apache2/apache2.conf \
@@ -52,3 +53,4 @@ ARG BUILDPLATFORM
 ARG TARGETPLATFORM
 
 RUN echo "Built on $BUILDPLATFORM for $TARGETPLATFORM" > /build-info.txt
+
