@@ -1,4 +1,5 @@
-FROM php:8.4.27-apache
+# 8.4 系の最新パッチに追従する。8.5 には上がらない。
+FROM php:8.4-apache
 
 # Docswell用ベースイメージ
 

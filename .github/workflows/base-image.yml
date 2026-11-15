@@ -2,64 +2,197 @@ name: Build Base Docker Image
 
 on:
   schedule:
-    - cron: '0 0 * * 0'  # 毎週日曜日に実行
-  workflow_dispatch:  # 手動実行も可能
+    - cron: '0 0 * * 0' # 毎週日曜 0:00 UTC
+  workflow_dispatch:
+
+# GHCR への push はリポジトリシークレット CR_PAT のままにする。
+# パッケージはリポジトリに紐づいているが、PAT で作ったイメージは
+# Actions の書き込み許可が別設定のことがあり、未確認のまま
+# GITHUB_TOKEN に切り替えると週次 push が 403 で止まる。
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/docker-php-base
 
 jobs:
   build-amd64:
-    runs-on: ubuntu-latest
+    # ubuntu-latest は 2026-11 に 26.04 へ移り、docker push が
+    # provenance 付きの OCI index を書くようになった。OS は固定する。
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
-      
+        uses: actions/checkout@v5
+
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.CR_PAT }}
-      
+
       - name: Build and push AMD64 image
         run: |
-          docker build -f ./Dockerfile.base -t ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest .
-          docker push ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest
+          set -euo pipefail
+          # ネイティブビルド。QEMU は使わない。
+          # provenance/sbom を付けると単体タグが manifest list になる。
+          docker buildx build \
+            --pull \
+            --provenance=false \
+            --sbom=false \
+            -f ./Dockerfile.base \
+            -t "$IMAGE:amd64-latest" \
+            --push \
+            .
 
   build-arm64:
-    runs-on: ubuntu-24.04-arm  # ARM64アーキテクチャ用
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
-      
+        uses: actions/checkout@v5
+
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.CR_PAT }}
-      
+
       - name: Build and push ARM64 image
         run: |
-          docker build -f ./Dockerfile.base -t ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest .
-          docker push ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest
+          set -euo pipefail
+          docker buildx build \
+            --pull \
+            --provenance=false \
+            --sbom=false \
+            -f ./Dockerfile.base \
+            -t "$IMAGE:arm64-latest" \
+            --push \
+            .
 
   merge-manifest:
     needs: [build-amd64, build-arm64]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.CR_PAT }}
-      
+
       - name: Create and push manifest list
         run: |
-          docker manifest create ghcr.io/${{ github.repository_owner }}/docker-php-base:latest \
-            --amend ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest \
-            --amend ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest
-          docker manifest create ghcr.io/${{ github.repository_owner }}/docker-php-base:${{ github.sha }} \
-            --amend ghcr.io/${{ github.repository_owner }}/docker-php-base:amd64-latest \
-            --amend ghcr.io/${{ github.repository_owner }}/docker-php-base:arm64-latest
-          docker manifest push ghcr.io/${{ github.repository_owner }}/docker-php-base:latest
-          docker manifest push ghcr.io/${{ github.repository_owner }}/docker-php-base:${{ github.sha }}
+          set -euo pipefail
+          # docker manifest create --amend は index を受け取れず
+          # "is a manifest list" で失敗する。imagetools は単一マニフェストでも
+          # index でも統合できる。
+          docker buildx imagetools create \
+            -t "$IMAGE:latest" \
+            -t "$IMAGE:$GITHUB_SHA" \
+            "$IMAGE:amd64-latest" \
+            "$IMAGE:arm64-latest"
+
+          inspect="$(docker buildx imagetools inspect "$IMAGE:latest")"
+          printf '%s\n' "$inspect"
+          for platform in linux/amd64 linux/arm64; do
+            if ! grep -q -F "$platform" <<< "$inspect"; then
+              echo "::error::$IMAGE:latest に ${platform} がありません"
+              exit 1
+            fi
+          done
+
+  scan-latest:
+    needs: merge-manifest
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
+
+      - name: Scan latest image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:latest
+          format: json
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          timeout: 15m
+          hide-progress: true
+          cache: false
+          output: trivy.json
+
+      - name: Write scan summary
+        shell: python3 {0}
+        run: |
+          import json
+          import os
+
+          with open("trivy.json", encoding="utf-8") as report_file:
+              data = json.load(report_file)
+
+          rows = []
+          for result in data.get("Results") or []:
+              for vuln in result.get("Vulnerabilities") or []:
+                  if vuln.get("Severity") in ("CRITICAL", "HIGH"):
+                      rows.append(vuln)
+
+          critical = sum(1 for vuln in rows if vuln.get("Severity") == "CRITICAL")
+          high = sum(1 for vuln in rows if vuln.get("Severity") == "HIGH")
+          print(f"HIGH={high} CRITICAL={critical}")
+
+          def cell(value):
+              return str(value or "-").replace("|", "\\|").replace("\n", " ")
+
+          lines = [
+              "### Trivy HIGH/CRITICAL (`:latest`)",
+              "",
+              f"検出数: CRITICAL {critical} / HIGH {high}",
+              "",
+              "脆弱性があってもこのジョブは失敗させない。ランナーは amd64 なので、スキャン対象は `:latest` の linux/amd64 側。",
+              "",
+          ]
+          if not rows:
+              lines.append("HIGH/CRITICAL は見つからなかった。")
+          else:
+              shown = sorted(
+                  rows,
+                  key=lambda vuln: (
+                      vuln.get("Severity") != "CRITICAL",
+                      vuln.get("VulnerabilityID") or "",
+                  ),
+              )
+              limit = 40
+              lines.extend(
+                  [
+                      "| Severity | ID | Package | Installed | Fixed |",
+                      "| --- | --- | --- | --- | --- |",
+                  ]
+              )
+              for vuln in shown[:limit]:
+                  lines.append(
+                      "| {severity} | {vuln_id} | {package} | {installed} | {fixed} |".format(
+                          severity=cell(vuln.get("Severity")),
+                          vuln_id=cell(vuln.get("VulnerabilityID")),
+                          package=cell(vuln.get("PkgName")),
+                          installed=cell(vuln.get("InstalledVersion")),
+                          fixed=cell(vuln.get("FixedVersion")),
+                      )
+                  )
+              if len(shown) > limit:
+                  lines.extend(["", f"残り {len(shown) - limit} 件は artifact `trivy-latest` を見る。"])
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines) + "\n")
+
+      - name: Upload Trivy report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-latest
+          path: trivy.json
+          retention-days: 90
