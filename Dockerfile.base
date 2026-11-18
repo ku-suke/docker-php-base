@@ -6,8 +6,14 @@ FROM php:8.4-apache
 # PHP拡張インストーラーを追加
 COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
 
-# 必要最低限のシステムパッケージだけをインストール
-RUN apt-get update \
+# 必要最低限のシステムパッケージだけをインストールする。
+# 公式 php イメージの再ビルドを待たず、trixie-security の修正を取り込む。
+# 変更済みの設定ファイルは残す（Apache の envvars と mpm）。
+RUN export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update \
+    && apt-get upgrade -y --no-install-recommends --with-new-pkgs \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" \
     && apt-get install -y --no-install-recommends \
     git \
     zip \
